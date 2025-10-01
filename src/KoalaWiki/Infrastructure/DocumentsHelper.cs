@@ -237,6 +237,8 @@ public class DocumentsHelper
 
     public static void ScanDirectory(string directoryPath, List<PathInfo> infoList, string[] ignoreFiles)
     {
+        const int chunkSize = 800 * 1024; // 800KB
+
         // 使用栈来避免递归调用栈溢出
         var directoriesToProcess = new Stack<string>();
         directoriesToProcess.Push(directoryPath);
@@ -247,43 +249,48 @@ public class DocumentsHelper
 
             try
             {
-                // 遍历当前目录的所有文件
-                var files = Directory.GetFiles(currentDirectory);
-                infoList.AddRange(from file in files.Where(file =>
+                foreach (var file in Directory.GetFiles(currentDirectory))
+                {
+                    if (ShouldIgnoreFile(file, ignoreFiles))
                     {
-                        var filename = Path.GetFileName(file);
+                        continue;
+                    }
 
-                        // 支持*的匹配
-                        foreach (var pattern in ignoreFiles)
+                    var fileInfo = new FileInfo(file);
+                    var totalSize = fileInfo.Length;
+
+                    var totalChunks = (int)Math.Ceiling(totalSize / (double)chunkSize);
+                    if (totalChunks <= 0)
+                    {
+                        totalChunks = 1;
+                    }
+
+                    for (var chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++)
+                    {
+                        var offset = (long)chunkIndex * chunkSize;
+                        var remaining = totalSize - offset;
+                        var length = (int)Math.Min(chunkSize, remaining);
+
+                        infoList.Add(new PathInfo
                         {
-                            if (string.IsNullOrWhiteSpace(pattern) || pattern.StartsWith("#"))
-                                continue;
+                            Path = file,
+                            Name = fileInfo.Name,
+                            Type = "File",
+                            Size = totalSize,
+                            ChunkIndex = chunkIndex,
+                            ChunkCount = totalChunks,
+                            ChunkOffset = offset,
+                            ChunkLength = length
+                        });
 
-                            var trimmedPattern = pattern.Trim();
-
-                            // 转换gitignore模式到正则表达式
-                            if (trimmedPattern.Contains('*'))
-                            {
-                                string regexPattern = "^" + Regex.Escape(trimmedPattern).Replace("\\*", ".*") + "$";
-                                if (Regex.IsMatch(filename, regexPattern, RegexOptions.IgnoreCase))
-                                    return false;
-                            }
-                            else if (filename.Equals(trimmedPattern, StringComparison.OrdinalIgnoreCase))
-                            {
-                                return false;
-                            }
+                        if (remaining <= chunkSize)
+                        {
+                            break;
                         }
+                    }
+                }
 
-                        return true;
-                    })
-                    let fileInfo = new FileInfo(file)
-                    // TODO 过滤掉大于 800kb 
-                    where fileInfo.Length <= 800 * 1024 // 800KB
-                    select new PathInfo { Path = file, Name = fileInfo.Name, Type = "File" });
-
-                // 遍历当前目录的所有子目录
-                var directories = Directory.GetDirectories(currentDirectory);
-                foreach (var directory in directories)
+                foreach (var directory in Directory.GetDirectories(currentDirectory))
                 {
                     var dirName = Path.GetFileName(directory);
 
@@ -291,42 +298,11 @@ public class DocumentsHelper
                     if (dirName.StartsWith("."))
                         continue;
 
-                    // 支持通配符匹配目录
-                    bool shouldIgnore = false;
-                    foreach (var pattern in ignoreFiles)
-                    {
-                        if (string.IsNullOrWhiteSpace(pattern) || pattern.StartsWith("#"))
-                            continue;
+                    if (ShouldIgnoreDirectory(dirName, ignoreFiles))
+                        continue;
 
-                        var trimmedPattern = pattern.Trim();
-
-                        // 如果模式以/结尾，表示只匹配目录
-                        bool directoryPattern = trimmedPattern.EndsWith("/");
-                        if (directoryPattern)
-                            trimmedPattern = trimmedPattern.TrimEnd('/');
-
-                        // 转换gitignore模式到正则表达式
-                        if (trimmedPattern.Contains('*'))
-                        {
-                            string regexPattern = "^" + Regex.Escape(trimmedPattern).Replace("\\*", ".*") + "$";
-                            if (Regex.IsMatch(dirName, regexPattern, RegexOptions.IgnoreCase))
-                            {
-                                shouldIgnore = true;
-                                break;
-                            }
-                        }
-                        else if (dirName.Equals(trimmedPattern, StringComparison.OrdinalIgnoreCase))
-                        {
-                            shouldIgnore = true;
-                            break;
-                        }
-                    }
-
-                    if (!shouldIgnore)
-                    {
-                        // 将子目录推入栈中等待处理，而不是递归调用
-                        directoriesToProcess.Push(directory);
-                    }
+                    // 将子目录推入栈中等待处理，而不是递归调用
+                    directoriesToProcess.Push(directory);
                 }
             }
             catch (UnauthorizedAccessException)
@@ -345,5 +321,60 @@ public class DocumentsHelper
                 continue;
             }
         }
+    }
+
+    private static bool ShouldIgnoreFile(string filePath, string[] ignoreFiles)
+    {
+        var fileName = Path.GetFileName(filePath);
+
+        foreach (var pattern in ignoreFiles)
+        {
+            if (string.IsNullOrWhiteSpace(pattern) || pattern.StartsWith("#"))
+                continue;
+
+            var trimmedPattern = pattern.Trim();
+
+            if (trimmedPattern.Contains('*'))
+            {
+                var regexPattern = "^" + Regex.Escape(trimmedPattern).Replace("\\*", ".*") + "$";
+                if (Regex.IsMatch(fileName, regexPattern, RegexOptions.IgnoreCase))
+                    return true;
+            }
+            else if (fileName.Equals(trimmedPattern, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ShouldIgnoreDirectory(string directoryName, string[] ignoreFiles)
+    {
+        foreach (var pattern in ignoreFiles)
+        {
+            if (string.IsNullOrWhiteSpace(pattern) || pattern.StartsWith("#"))
+                continue;
+
+            var trimmedPattern = pattern.Trim();
+
+            // 如果模式以/结尾，表示只匹配目录
+            var directoryPattern = trimmedPattern.EndsWith("/");
+            if (directoryPattern)
+                trimmedPattern = trimmedPattern.TrimEnd('/');
+
+            if (trimmedPattern.Contains('*'))
+            {
+                string regexPattern = "^" + Regex.Escape(trimmedPattern).Replace("\\*", ".*") + "$";
+                if (Regex.IsMatch(directoryName, regexPattern, RegexOptions.IgnoreCase))
+                    return true;
+            }
+            else if (directoryName.Equals(trimmedPattern, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

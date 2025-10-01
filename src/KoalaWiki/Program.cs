@@ -157,6 +157,7 @@ builder.Services.AddSingleton<WarehouseProcessingTask>();
 builder.Services.AddHostedService<WarehouseProcessingTask>(provider =>
     provider.GetRequiredService<WarehouseProcessingTask>());
 builder.Services.AddHostedService<DataMigrationTask>();
+builder.Services.AddSingleton<IMem0ClientFactory, DefaultMem0ClientFactory>();
 builder.Services.AddHostedService<Mem0Rag>();
 
 builder.Services.AddDbContext(builder.Configuration);
