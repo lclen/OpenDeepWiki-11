@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using KoalaWiki.Domains.DocumentFile;
 using KoalaWiki.Entities;
 using KoalaWiki.KoalaWarehouse.GenerateThinkCatalogue;
@@ -25,6 +26,16 @@ public sealed class DocumentStructureGenerationStep(ILogger<DocumentStructureGen
                 context.Catalogue ?? string.Empty,
                 context.Warehouse,
                 context.Classification).ConfigureAwait(false);
+
+            if (result == null)
+            {
+                throw new InvalidDataException("未能生成有效的文档目录结构。");
+            }
+
+            if (result.items == null || result.items.Count == 0)
+            {
+                throw new InvalidDataException("生成的文档目录为空。");
+            }
 
             var documentCatalogs = new List<DocumentCatalog>();
 

@@ -1,4 +1,6 @@
-﻿using KoalaWiki.Core.Extensions;
+using System.IO;
+using System.Text;
+using KoalaWiki.Core.Extensions;
 using KoalaWiki.Prompts;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
@@ -110,50 +112,13 @@ public static partial class GenerateThinkCatalogueService
             new TextContent(
                 $"""
                  <system-reminder>
-                 <catalog_tool_usage_guidelines>
-                 **PARALLEL READ OPERATIONS**
-                 - MANDATORY: Always perform PARALLEL File.Read calls — batch multiple files in a SINGLE message for maximum efficiency
-                 - CRITICAL: Read MULTIPLE files simultaneously in one operation
-                 - PROHIBITED: Sequential one-by-one file reads (inefficient and wastes context capacity)
-
-                 **EDITING OPERATION LIMITS**
-                 - HARD LIMIT: Maximum of 3 editing operations total (catalog.MultiEdit only)
-                 - PRIORITY: Maximize each catalog.MultiEdit operation by bundling ALL related changes across multiple files
-                 - STRATEGIC PLANNING: Consolidate all modifications into minimal MultiEdit operations to stay within the limit
-                 - Use catalog.Write **only once** for initial creation or full rebuild (counts as initial structure creation, not part of the 3 edits)
-                 - Always verify content before further changes using catalog.Read (Reads do NOT count toward limit)
-
-                 **CRITICAL MULTIEDIT BEST PRACTICES**
-                 - MAXIMIZE EFFICIENCY: Each MultiEdit should target multiple distinct sections across files
-                 - AVOID CONFLICTS: Never edit overlapping or identical content regions within the same MultiEdit operation
-                 - UNIQUE TARGETS: Ensure each edit instruction addresses a completely different section or file
-                 - BATCH STRATEGY: Group all necessary changes by proximity and relevance, but maintain clear separation between edit targets
-
-                 **RECOMMENDED EDITING SEQUENCE**
-                 1. catalog.Write (one-time full structure creation)
-                 2. catalog.MultiEdit with maximum parallel changes (counts toward 3-operation limit)
-                 3. Use catalog.Read after each MultiEdit to verify success before next operation
-                 4. Remaining MultiEdit operations for any missed changes
-                 </catalog_tool_usage_guidelines>
-
-
-                 ## Execution steps requirements:
-                 1. Before performing any other operations, you must first invoke the 'agent-think' tool to plan the analytical steps. This is a necessary step for completing each research task.
-                 2. Then, the code structure provided in the code_file must be utilized by calling file.Read to read the code for in-depth analysis, and then use catalog.Write to write the results of the analysis into the catalog directory.
-                 3. If necessary, some parts that need to be optimized can be edited through catalog.MultiEdit.
-
-                 For maximum efficiency, whenever you need to perform multiple independent operations, invoke all relevant tools simultaneously rather than sequentially.
-                 The repository's directory structure has been provided in <code_files>. Please utilize the provided structure directly for file navigation and reading operations, rather than relying on glob patterns or filesystem traversal methods.
-                 Below is an example of the directory structure of the warehouse, where /D represents a directory and /F represents a file:
-                    server/D
-                      src/D
-                        Main/F
-                    web/D
-                      components/D
-                        Header.tsx/F
-
+                 Return the final documentation catalogue by invoking `catalog.GenerateCatalogue` exactly once.
+                 Structure requirements:
+                 - Provide a JSON object with an `items` array. Each item must include `name`, `title`, and `prompt`, and may include nested `children` following the same schema.
+                 - Keep reasoning concise and rely on the tool response for JSON output.
+                 - `catalog.Write` and `catalog.MultiEdit` remain for compatibility but should only be used if absolutely necessary.
+                 Avoid emitting JSON in chat; finish with the single tool call.
                  {Prompt.Language}
-
                  </system-reminder>
                  """),
             new TextContent(Prompt.Language)
@@ -178,94 +143,126 @@ public static partial class GenerateThinkCatalogueService
             MaxTokens = DocumentsHelper.GetMaxTokens(OpenAIOptions.AnalysisModel)
         };
 
-        int retry = 1;
         var inputTokenCount = 0;
         var outputTokenCount = 0;
 
-        // 添加超时控制
-        var cts = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+        const int maxStreamingAttempts = 3;
+        var streamingCompleted = false;
+        StringBuilder? responseTranscript = null;
 
-        retry:
-        try
+        for (var streamingAttempt = 0; streamingAttempt < maxStreamingAttempts && !streamingCompleted; streamingAttempt++)
         {
-            // 流式获取响应 - 添加取消令牌和异常处理
-            await foreach (var item in chat.GetStreamingChatMessageContentsAsync(
-                               history,
-                               settings,
-                               analysisModel,
-                               cts.Token).ConfigureAwait(false))
-            {
-                // 定期检查取消
-                cts.Token.ThrowIfCancellationRequested();
+            responseTranscript = new StringBuilder();
 
-                switch (item.InnerContent)
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+
+            try
+            {
+                await foreach (var item in chat.GetStreamingChatMessageContentsAsync(
+                                   history,
+                                   settings,
+                                   analysisModel,
+                                   cts.Token).ConfigureAwait(false))
                 {
-                    case StreamingChatCompletionUpdate { Usage.InputTokenCount: > 0 } content:
-                        inputTokenCount += content.Usage.InputTokenCount;
-                        outputTokenCount += content.Usage.OutputTokenCount;
-                        break;
+                    cts.Token.ThrowIfCancellationRequested();
 
-                    case StreamingChatCompletionUpdate tool when tool.ToolCallUpdates.Count > 0:
-                        break;
+                    switch (item.InnerContent)
+                    {
+                        case StreamingChatCompletionUpdate { Usage.InputTokenCount: > 0 } content:
+                            inputTokenCount += content.Usage.InputTokenCount;
+                            outputTokenCount += content.Usage.OutputTokenCount;
+                            break;
 
-                    case StreamingChatCompletionUpdate value:
-                        var text = value.ContentUpdate.FirstOrDefault()?.Text;
-                        if (!string.IsNullOrEmpty(text))
-                        {
-                            Console.Write(text);
-                        }
+                        case StreamingChatCompletionUpdate tool when tool.ToolCallUpdates.Count > 0:
+                            break;
 
-                        break;
+                        case StreamingChatCompletionUpdate value:
+                            var text = value.ContentUpdate.FirstOrDefault()?.Text;
+                            if (!string.IsNullOrEmpty(text))
+                            {
+                                responseTranscript.Append(text);
+                                Console.Write(text);
+                            }
+
+                            break;
+                    }
                 }
+
+                streamingCompleted = true;
             }
-        }
-        catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
-        {
-            retry++;
-            if (retry <= 3)
+            catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
             {
-                Console.WriteLine($"超时，正在重试 ({retry}/3)...");
+                if (streamingAttempt + 1 >= maxStreamingAttempts)
+                {
+                    throw new TimeoutException("流式处理超时");
+                }
+
+                Console.WriteLine($"超时，正在重试 ({streamingAttempt + 1}/{maxStreamingAttempts})...");
                 await Task.Delay(2000, CancellationToken.None);
-
-                // 正确地重置超时令牌
-                cts.Dispose();
-                cts = new CancellationTokenSource(TimeSpan.FromMinutes(5)); // 重新赋值给cts
-                goto retry;
             }
-
-            throw new TimeoutException("流式处理超时");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"流式处理错误: {ex.Message}");
-            throw;
-        }
-        finally
-        {
-            cts?.Dispose(); // 确保资源被释放
+            catch (Exception ex)
+            {
+                Console.WriteLine($"流式处理错误: {ex.Message}");
+                throw;
+            }
         }
 
-        // Prefer tool-stored JSON when available
-        if (!string.IsNullOrWhiteSpace(catalogueTool.Content))
+        responseTranscript ??= new StringBuilder();
+
+        if (!streamingCompleted)
         {
-            // 质量增强逻辑
-            if (!DocumentOptions.RefineAndEnhanceQuality || attemptNumber >= 3) // 前几次尝试才进行质量增强
-                return ExtractAndParseJson(catalogueTool.Content);
+            return null;
+        }
+
+        Log.Logger.Debug("目录生成流式调用令牌统计：输入 {InputTokens}，输出 {OutputTokens}", inputTokenCount, outputTokenCount);
+
+        DocumentResultCatalogue? parsedCatalogue = null;
+        string? toolParseError = null;
+
+        if (!string.IsNullOrWhiteSpace(catalogueTool.Content) &&
+            TryDeserializeCatalogue(catalogueTool.Content, out parsedCatalogue, out toolParseError))
+        {
+            if (!DocumentOptions.RefineAndEnhanceQuality || attemptNumber >= 3)
+            {
+                return parsedCatalogue;
+            }
 
             await RefineResponse(history, chat, settings, analysisModel);
 
-            return ExtractAndParseJson(catalogueTool.Content);
-        }
-        else
-        {
-            retry++;
-            if (retry > 3)
+            if (TryDeserializeCatalogue(catalogueTool.Content, out var refinedCatalogue, out var refineError))
             {
-                throw new Exception("AI生成目录的时候重复多次响应空内容");
+                return refinedCatalogue;
             }
 
-            goto retry;
+            Log.Logger.Warning("细化处理后重新解析目录失败：{Error}", refineError ?? "unknown");
+
+            return parsedCatalogue;
         }
+
+        if (!string.IsNullOrWhiteSpace(toolParseError))
+        {
+            Log.Logger.Error("工具调用返回的目录 JSON 无法解析：{Error}", toolParseError);
+        }
+
+        if (parsedCatalogue == null)
+        {
+            var responseText = responseTranscript.ToString();
+            var fallbackJson = ExtractJsonFragment(responseText);
+
+            if (!string.IsNullOrWhiteSpace(fallbackJson) &&
+                TryDeserializeCatalogue(fallbackJson, out parsedCatalogue, out var fallbackError))
+            {
+                return parsedCatalogue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(responseText))
+            {
+                var preview = responseText.Length > 800 ? responseText[..800] + "…" : responseText;
+                Log.Logger.Warning("降级解析模型回复失败。错误：{Error}，回复片段：{Preview}", fallbackError ?? "unknown", preview);
+            }
+        }
+
+        return parsedCatalogue;
     }
 
     private static async Task RefineResponse(ChatHistory history, IChatCompletionService chat,
@@ -297,11 +294,59 @@ public static partial class GenerateThinkCatalogueService
         }
     }
 
-    private static DocumentResultCatalogue? ExtractAndParseJson(string responseText)
+    private static bool TryDeserializeCatalogue(string content, out DocumentResultCatalogue? catalogue,
+        out string? error)
     {
-        var extractedJson = JsonConvert.DeserializeObject<DocumentResultCatalogue>(responseText);
+        catalogue = null;
+        error = null;
 
-        return extractedJson;
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            error = "Content is empty.";
+            return false;
+        }
+
+        try
+        {
+            var parsed = JsonConvert.DeserializeObject<DocumentResultCatalogue>(content);
+            if (parsed == null)
+            {
+                error = "Deserialized catalogue is null.";
+                return false;
+            }
+
+            CatalogueValidator.EnsureValid(parsed);
+            catalogue = parsed;
+            return true;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or ArgumentException)
+        {
+            error = ex.Message;
+            Log.Logger.Debug(ex, "解析目录 JSON 失败");
+            return false;
+        }
+    }
+
+    private static string? ExtractJsonFragment(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+        {
+            return null;
+        }
+
+        var sanitized = responseText.Replace("```json", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Replace("```", string.Empty, StringComparison.OrdinalIgnoreCase)
+            .Trim();
+
+        var firstBrace = sanitized.IndexOf('{');
+        var lastBrace = sanitized.LastIndexOf('}');
+
+        if (firstBrace < 0 || lastBrace <= firstBrace)
+        {
+            return null;
+        }
+
+        return sanitized.Substring(firstBrace, lastBrace - firstBrace + 1);
     }
 
     private static ErrorType ClassifyError(Exception ex)

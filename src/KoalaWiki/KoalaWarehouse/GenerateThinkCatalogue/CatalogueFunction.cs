@@ -1,11 +1,117 @@
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using Serilog;
 
 namespace KoalaWiki.KoalaWarehouse.GenerateThinkCatalogue;
 
+internal static class CatalogueValidator
+{
+    public static void EnsureValid(DocumentResultCatalogue catalogue)
+    {
+        ArgumentNullException.ThrowIfNull(catalogue);
+
+        if (catalogue.items == null || catalogue.items.Count == 0)
+        {
+            throw new InvalidDataException("The catalogue must contain at least one item.");
+        }
+
+        foreach (var (item, index) in catalogue.items.Select((item, index) => (item, index)))
+        {
+            ValidateItem(item, index, new Stack<string>());
+        }
+    }
+
+    private static void ValidateItem(DocumentResultCatalogueItem item, int index, Stack<string> path)
+    {
+        if (item == null)
+        {
+            throw new InvalidDataException($"Catalogue item at index {index} is null.");
+        }
+
+        var parentPath = path.Count == 0 ? "<root>" : string.Join("/", path.Reverse());
+
+        if (string.IsNullOrWhiteSpace(item.name))
+        {
+            throw new InvalidDataException($"Catalogue item '{parentPath}' is missing a 'name'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(item.title))
+        {
+            throw new InvalidDataException($"Catalogue item '{item.name}' is missing a 'title'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(item.prompt))
+        {
+            throw new InvalidDataException($"Catalogue item '{item.name}' is missing a 'prompt'.");
+        }
+
+        if (item.children == null || item.children.Count == 0)
+        {
+            return;
+        }
+
+        path.Push(item.name);
+
+        try
+        {
+            foreach (var (child, childIndex) in item.children.Select((child, idx) => (child, idx)))
+            {
+                ValidateItem(child, childIndex, path);
+            }
+        }
+        finally
+        {
+            path.Pop();
+        }
+    }
+}
+
 public class CatalogueFunction
 {
+    [KernelFunction("GenerateCatalogue"), Description("""
+                                                Generate the complete documentation catalogue exactly once.
+                                                Provide a JSON object with an `items` array, where each item contains:
+                                                - name: machine readable identifier
+                                                - title: human readable title
+                                                - prompt: authoring guidance for the section
+                                                - children: optional nested items following the same schema
+                                                """)]
+    public DocumentResultCatalogue GenerateCatalogue(
+        [Description("Strongly typed documentation catalogue structure")]
+        DocumentResultCatalogue catalogue)
+    {
+        if (CatalogueGenerated)
+        {
+            throw new InvalidOperationException("GenerateCatalogue may only be called once per task.");
+        }
+
+        try
+        {
+            CatalogueValidator.EnsureValid(catalogue);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentNullException)
+        {
+            Log.Logger.Error(ex, "Invalid catalogue structure detected during GenerateCatalogue invocation.");
+            throw;
+        }
+
+        var serialized = JsonConvert.SerializeObject(catalogue, Formatting.None);
+        var response = Write(serialized);
+
+        if (!response.Contains("successful", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(response);
+        }
+
+        CatalogueGenerated = true;
+        return catalogue;
+    }
+
     [KernelFunction("Write"), Description("""
                                           Generate and store the complete documentation structure JSON.
                                           Usage:
@@ -39,6 +145,8 @@ public class CatalogueFunction
                 $"<system-reminder>Write rejected: resulting content is not valid JSON. Provide a more precise edit. Error Message:{exception.Message}</system-reminder>";
         }
 
+
+        CatalogueGenerated = true;
 
         return "<system-reminder>Write successful</system-reminder>";
     }
@@ -168,6 +276,8 @@ When making edits:
     }
 
     public string? Content { get; private set; }
+
+    public bool CatalogueGenerated { get; private set; }
 }
 
 public class MultiEditInput
