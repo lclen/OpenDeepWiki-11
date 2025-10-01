@@ -1,13 +1,14 @@
-﻿using System.Net.Http.Headers;
+using System.Collections.Generic;
 using KoalaWiki.Core.Extensions;
 using KoalaWiki.Domains.Warehouse;
 using KoalaWiki.Prompts;
 using Mem0.NET;
 using Microsoft.EntityFrameworkCore;
+using System.Linq;
 
 namespace KoalaWiki.Mem0;
 
-public class Mem0Rag(IServiceProvider service, ILogger<Mem0Rag> logger) : BackgroundService
+public class Mem0Rag(IServiceProvider service, ILogger<Mem0Rag> logger, IMem0ClientFactory clientFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -44,15 +45,14 @@ public class Mem0Rag(IServiceProvider service, ILogger<Mem0Rag> logger) : Backgr
 
             var files = DocumentsHelper.GetCatalogueFiles(documents.GitPath);
 
-            var client = new Mem0Client(OpenAIOptions.Mem0ApiKey, OpenAIOptions.Mem0Endpoint, null, null,
-                new HttpClient()
-                {
-                    Timeout = TimeSpan.FromMinutes(600),
-                    DefaultRequestHeaders =
-                    {
-                        UserAgent = { new ProductInfoHeaderValue("KoalaWiki", "1.0") }
-                    }
-                });
+            await using var client = clientFactory.CreateClient();
+            var codeSystemPrompt = await PromptContext.Mem0(nameof(PromptConstant.Mem0.CodeSystem),
+                new KernelArguments(), OpenAIOptions.ChatModel);
+
+            var groupedFiles = files
+                .GroupBy(file => file.Path, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderBy(chunk => chunk.ChunkIndex).ToList())
+                .ToList();
 
             var catalogs = await dbContext.DocumentCatalogs
                 .Where(x => x.DucumentId == documents.Id && x.IsCompleted == true && x.IsDeleted == false)
@@ -154,52 +154,20 @@ public class Mem0Rag(IServiceProvider service, ILogger<Mem0Rag> logger) : Backgr
             const int fileFailureThreshold = 5; // 熔断阈值
             bool circuitBroken = false;
 
-            await Parallel.ForEachAsync(files, fileParallelOptions, async (file, ct) =>
+            await Parallel.ForEachAsync(groupedFiles, fileParallelOptions, async (fileGroup, ct) =>
             {
                 if (circuitBroken)
                     return;
 
                 try
                 {
-                    // 读取文件内容
-                    var content = await File.ReadAllTextAsync(file.Path, ct);
-
-                    if (string.IsNullOrWhiteSpace(content))
-                    {
-                        logger.LogWarning("文件 {File} 内容为空，跳过", file.Path);
-                        return;
-                    }
-
-                    // 处理文件内容
-                    await client.AddAsync([
-                        new Message()
-                        {
-                            Role = "system",
-                            Content = await PromptContext.Mem0(nameof(PromptConstant.Mem0.CodeSystem),
-                                new KernelArguments(), OpenAIOptions.ChatModel)
-                        },
-                        new Message
-                        {
-                            Role = "user",
-                            Content = $"""
-                                       ```{file.Path.Replace(documents.GitPath, "").TrimStart("/").TrimStart('\\')}
-                                       {content}
-                                       ```
-                                       """
-                        }
-                    ], userId: warehouse.Id, memoryType: "procedural_memory", metadata: new Dictionary<string, object>()
-                    {
-                        { "fileName", file.Name },
-                        { "filePath", file.Path },
-                        { "fileType", file.Type },
-                        { "type", "code" },
-                        { "documentId", documents.Id },
-                    }, cancellationToken: ct);
+                    await Mem0ChunkUploader.ProcessAsync(client, fileGroup, documents, warehouse, codeSystemPrompt,
+                        ct, logger);
                 }
                 catch (Exception ex)
                 {
                     Interlocked.Increment(ref fileFailureCount);
-                    logger.LogError(ex, "处理文件 {File} 时发生错误", file);
+                    logger.LogError(ex, "处理文件 {File} 时发生错误", fileGroup.FirstOrDefault()?.Path);
 
                     if (fileFailureCount >= fileFailureThreshold)
                     {
