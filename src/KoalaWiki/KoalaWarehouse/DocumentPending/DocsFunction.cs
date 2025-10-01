@@ -6,6 +6,34 @@ namespace KoalaWiki.KoalaWarehouse.DocumentPending;
 public class DocsFunction
 {
     /// <summary>
+    /// 直接生成完整的 Markdown 文档
+    /// </summary>
+    /// <param name="content">文档的完整 Markdown 内容</param>
+    /// <returns>返回生成的 Markdown 内容</returns>
+    [KernelFunction("Generate"), Description("Generate the entire markdown document in one response.")]
+    public string Generate([
+        Description("Complete markdown document content including all sections, diagrams and references.")
+        ] string content)
+    {
+        Content = content?.Trim();
+        return Content ?? string.Empty;
+    }
+
+    /// <summary>
+    /// 生成用于存储的简要摘要
+    /// </summary>
+    /// <param name="summary">文档的精简摘要</param>
+    /// <returns>返回生成的摘要</returns>
+    [KernelFunction("Summarize"), Description("Return a concise summary for the generated document.")]
+    public string Summarize([
+        Description("Short summary describing the generated documentation, written in Simplified Chinese.")
+        ] string summary)
+    {
+        Summary = summary?.Trim();
+        return Summary ?? string.Empty;
+    }
+
+    /// <summary>
     /// 写入内容
     /// </summary>
     /// <returns></returns>
@@ -169,6 +197,11 @@ When making edits:
     /// 内容
     /// </summary>
     public string? Content { get; private set; }
+
+    /// <summary>
+    /// 摘要
+    /// </summary>
+    public string? Summary { get; private set; }
 }
 
 public class MultiEditInput
