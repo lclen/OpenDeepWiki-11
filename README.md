@@ -102,6 +102,39 @@ This way, OpenDeepWiki can serve as an MCPServer for other AI models to call, fa
 
 ---
 
+# Multi-Repository Responses Input
+
+You can now instruct the `/api/Responses` endpoint to analyze more than one repository in a single conversation. Add the optional `repositories` collection to the request payload to provide additional warehouses while keeping the legacy `organizationName`/`name` fields for backwards compatibility.
+
+```jsonc
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "content": "Explain how the web API authenticates users" }
+      ]
+    }
+  ],
+  "repositories": [
+    {
+      "warehouseId": "core-api",
+      "alias": "Core",
+      "prefix": "[core] "
+    },
+    {
+      "organizationName": "AIDotNet",
+      "name": "OpenDeepWiki",
+      "alias": "Docs"
+    }
+  ]
+}
+```
+
+Each repository entry may specify a direct `warehouseId` or fall back to the organization/name pair. Optional `alias` and `prefix` values help the assistant disambiguate catalogue sections inside the system prompt. When multiple repositories are supplied the service aggregates their directory trees, configures the RAG tool for all warehouse IDs, and surfaces GitHub/Gitee tool plugins with unique labels.
+
+---
+
 # 🚀 Quick Start
 
 1. Clone the repository

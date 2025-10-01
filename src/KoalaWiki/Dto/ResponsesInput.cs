@@ -16,6 +16,11 @@ public class ResponsesInput
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
+    /// 多仓库选择器（可选）。当提供多个仓库时，服务将自动切换至多仓模式。
+    /// </summary>
+    public List<RepositorySelector>? Repositories { get; set; }
+
+    /// <summary>
     /// 应用ID
     /// </summary>
     public string? AppId { get; set; }
@@ -24,6 +29,34 @@ public class ResponsesInput
     /// 是否开启深度研究
     /// </summary>
     public bool DeepResearch { get; set; } = false;
+}
+
+public class RepositorySelector
+{
+    /// <summary>
+    /// 仓库在系统中的唯一标识，可选。当提供时将优先于组织名和仓库名匹配。
+    /// </summary>
+    public string? WarehouseId { get; set; }
+
+    /// <summary>
+    /// 组织名（与旧字段保持一致以兼容旧版调用）。
+    /// </summary>
+    public string OrganizationName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 仓库名称。
+    /// </summary>
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 可选的别名，在多仓模式下用于展示及提示信息。
+    /// </summary>
+    public string? Alias { get; set; }
+
+    /// <summary>
+    /// 目录展示前缀（例如 "repo-a:"），帮助区分不同仓库的目录结构。
+    /// </summary>
+    public string? Prefix { get; set; }
 }
 
 public class ResponsesMessageInput

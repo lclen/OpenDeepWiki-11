@@ -46,6 +46,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenDeepWiki.CodeFoundation
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KoalaWiki.Provider.MySQL", "Provider\KoalaWiki.Provider.MySQL\KoalaWiki.Provider.MySQL.csproj", "{E871B8A2-41D3-455A-AF74-6D324940A0AB}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{E7D2E272-A554-4D65-A410-BF0064B78F68}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KoalaWiki.Tests", "tests\KoalaWiki.Tests\KoalaWiki.Tests.csproj", "{B97FEF7E-B192-4AF9-B798-79580A9ED931}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -85,18 +89,22 @@ Global
 		{A9C4E6B7-B9C3-6605-3477-4FA0194EDBA5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A9C4E6B7-B9C3-6605-3477-4FA0194EDBA5}.Release|Any CPU.Build.0 = Release|Any CPU
 		{27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{E871B8A2-41D3-455A-AF74-6D324940A0AB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{E871B8A2-41D3-455A-AF74-6D324940A0AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{E871B8A2-41D3-455A-AF74-6D324940A0AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{E871B8A2-41D3-455A-AF74-6D324940A0AB}.Release|Any CPU.Build.0 = Release|Any CPU
-	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
-	GlobalSection(NestedProjects) = preSolution
+                {27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                {27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+                {27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8}.Release|Any CPU.Build.0 = Release|Any CPU
+                {E871B8A2-41D3-455A-AF74-6D324940A0AB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                {E871B8A2-41D3-455A-AF74-6D324940A0AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                {E871B8A2-41D3-455A-AF74-6D324940A0AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+                {E871B8A2-41D3-455A-AF74-6D324940A0AB}.Release|Any CPU.Build.0 = Release|Any CPU
+                {B97FEF7E-B192-4AF9-B798-79580A9ED931}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+                {B97FEF7E-B192-4AF9-B798-79580A9ED931}.Debug|Any CPU.Build.0 = Debug|Any CPU
+                {B97FEF7E-B192-4AF9-B798-79580A9ED931}.Release|Any CPU.ActiveCfg = Release|Any CPU
+                {B97FEF7E-B192-4AF9-B798-79580A9ED931}.Release|Any CPU.Build.0 = Release|Any CPU
+        EndGlobalSection
+        GlobalSection(SolutionProperties) = preSolution
+                HideSolutionNode = FALSE
+        EndGlobalSection
+        GlobalSection(NestedProjects) = preSolution
 		{7542FEE4-8528-4C9D-A26B-8C1F4A24307C} = {7F5745CD-DAE4-4C81-A675-B427B634EB17}
 		{8E887B45-75E2-4264-B5DE-93C9E206495E} = {7F5745CD-DAE4-4C81-A675-B427B634EB17}
 		{E6A1B1C9-55F9-4568-9389-C16D47CFE798} = {7F5745CD-DAE4-4C81-A675-B427B634EB17}
@@ -105,9 +113,10 @@ Global
 		{72EF7275-1CC8-4609-8D4E-A77E5401C235} = {7F5745CD-DAE4-4C81-A675-B427B634EB17}
 		{D6C334AD-D67D-4E20-83C5-B5B47BCB886E} = {E6A1B1C9-55F9-4568-9389-C16D47CFE798}
 		{F39528D6-BAFE-4C38-B5C6-39CEA5B1BEA9} = {DCEA2329-4E7D-4E3E-A507-DEE82B7F7D8A}
-		{27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8} = {F39528D6-BAFE-4C38-B5C6-39CEA5B1BEA9}
-		{E871B8A2-41D3-455A-AF74-6D324940A0AB} = {E6A1B1C9-55F9-4568-9389-C16D47CFE798}
-	EndGlobalSection
+                {27B59BA7-49B8-4B9B-BDA2-9530DD2AE3B8} = {F39528D6-BAFE-4C38-B5C6-39CEA5B1BEA9}
+                {E871B8A2-41D3-455A-AF74-6D324940A0AB} = {E6A1B1C9-55F9-4568-9389-C16D47CFE798}
+                {B97FEF7E-B192-4AF9-B798-79580A9ED931} = {E7D2E272-A554-4D65-A410-BF0064B78F68}
+        EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {57749C22-AF12-4764-9AD7-5327DB50CDE5}
 	EndGlobalSection

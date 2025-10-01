@@ -102,6 +102,39 @@ OpenDeepWiki支持MCP协议：
 
 ---
 
+# 多仓库 Responses 输入示例
+
+现在可以在一次会话中让 `/api/Responses` 同时分析多个知识仓库。请求体中新增的 `repositories` 字段与原有的 `organizationName`/`name` 字段兼容，可按需继续使用旧格式。
+
+```jsonc
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "content": "请比较核心服务和文档站的鉴权差异" }
+      ]
+    }
+  ],
+  "repositories": [
+    {
+      "warehouseId": "core-api",
+      "alias": "核心服务",
+      "prefix": "[core] "
+    },
+    {
+      "organizationName": "AIDotNet",
+      "name": "OpenDeepWiki",
+      "alias": "文档站"
+    }
+  ]
+}
+```
+
+每个仓库可以直接提供 `warehouseId`，或继续使用组织名+仓库名的方式。可选的 `alias` 和 `prefix` 会在系统提示词中帮助区分不同仓库的目录。启用多仓模式后，服务会自动聚合目录结构、为所有仓库配置 RAG 搜索，并为 GitHub/Gitee 插件添加唯一标识。
+
+---
+
 # 🚀 快速开始 Quick Start
 
 1. 克隆仓库

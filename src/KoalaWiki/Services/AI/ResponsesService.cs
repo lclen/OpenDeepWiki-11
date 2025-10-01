@@ -34,17 +34,189 @@ public class ResponsesService(IKoalaWikiContext koala) : FastApi
         activity?.SetTag("model.provider", OpenAIOptions.ModelProvider);
         activity?.SetTag("model.name", OpenAIOptions.ChatModel);
 
-        // URL decode parameters
+        static string DescribeSelector(RepositorySelector selector)
+        {
+            if (!string.IsNullOrWhiteSpace(selector.WarehouseId))
+            {
+                return selector.WarehouseId!;
+            }
+
+            var organization = string.IsNullOrWhiteSpace(selector.OrganizationName)
+                ? ""
+                : selector.OrganizationName;
+            var name = string.IsNullOrWhiteSpace(selector.Name) ? "" : selector.Name;
+
+            return string.IsNullOrWhiteSpace(organization)
+                ? name
+                : $"{organization}/{name}";
+        }
+
+        static string ResolveLabel(Warehouse warehouse, RepositorySelector? selector)
+        {
+            if (!string.IsNullOrWhiteSpace(selector?.Alias))
+            {
+                return selector!.Alias!;
+            }
+
+            return string.IsNullOrWhiteSpace(warehouse.OrganizationName)
+                ? warehouse.Name
+                : $"{warehouse.OrganizationName}/{warehouse.Name}";
+        }
+
+        static string ApplyPrefix(string text, string prefix)
+        {
+            var normalized = text.Replace("\r\n", "\n");
+            var lines = normalized.Split('\n');
+            var builder = new StringBuilder();
+
+            foreach (var line in lines)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    builder.AppendLine(line);
+                }
+                else
+                {
+                    builder.AppendLine($"{prefix}{line}");
+                }
+            }
+
+            return builder.ToString().TrimEnd();
+        }
+
+        static string BuildCatalogue(IReadOnlyList<RepositoryContext> contexts)
+        {
+            if (contexts.Count == 1 && string.IsNullOrWhiteSpace(contexts[0].Selector?.Prefix))
+            {
+                return contexts[0].Catalogue;
+            }
+
+            var builder = new StringBuilder();
+
+            for (var i = 0; i < contexts.Count; i++)
+            {
+                var ctx = contexts[i];
+                var label = ResolveLabel(ctx.Warehouse, ctx.Selector);
+                var prefix = string.IsNullOrWhiteSpace(ctx.Selector?.Prefix)
+                    ? $"[{label}] "
+                    : ctx.Selector!.Prefix!;
+
+                builder.AppendLine($"## Repository {i + 1}: {label}");
+                builder.AppendLine($"Source: {ctx.Warehouse.Address.Replace(".git", string.Empty)}");
+                builder.AppendLine($"Branch: {ctx.Warehouse.Branch}");
+                builder.AppendLine();
+                builder.AppendLine(ApplyPrefix(ctx.Catalogue, prefix));
+
+                if (i < contexts.Count - 1)
+                {
+                    builder.AppendLine();
+                }
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        // URL decode parameters for backwards compatibility
         var decodedOrganizationName = HttpUtility.UrlDecode(input.OrganizationName);
         var decodedName = HttpUtility.UrlDecode(input.Name);
 
-        var warehouse = await koala.Warehouses
-            .AsNoTracking()
-            .FirstOrDefaultAsync(x =>
-                x.OrganizationName.ToLower() == decodedOrganizationName.ToLower() &&
-                x.Name.ToLower() == decodedName.ToLower());
+        record RepositoryContext(Warehouse Warehouse, Document Document, RepositorySelector? Selector, string Catalogue);
 
-        if (warehouse == null)
+        var repositoryContexts = new List<RepositoryContext>();
+        var missingRepositories = new List<string>();
+
+        if (input.Repositories is { Count: > 0 })
+        {
+            foreach (var selector in input.Repositories)
+            {
+                if (selector == null)
+                {
+                    continue;
+                }
+
+                Warehouse? targetWarehouse;
+
+                if (!string.IsNullOrWhiteSpace(selector.WarehouseId))
+                {
+                    targetWarehouse = await koala.Warehouses
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(x => x.Id.ToLower() == selector.WarehouseId!.ToLower());
+                }
+                else
+                {
+                    var selectorOrganization = HttpUtility.UrlDecode(selector.OrganizationName ?? string.Empty);
+                    var selectorName = HttpUtility.UrlDecode(selector.Name ?? string.Empty);
+
+                    targetWarehouse = await koala.Warehouses
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(x =>
+                            x.OrganizationName.ToLower() == selectorOrganization.ToLower() &&
+                            x.Name.ToLower() == selectorName.ToLower());
+                }
+
+                if (targetWarehouse == null)
+                {
+                    missingRepositories.Add(DescribeSelector(selector));
+                    continue;
+                }
+
+                var targetDocument = await koala.Documents
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.WarehouseId == targetWarehouse.Id);
+
+                if (targetDocument == null)
+                {
+                    missingRepositories.Add($"{DescribeSelector(selector)}:document");
+                    continue;
+                }
+
+                var catalogue = targetDocument.GetCatalogueSmartFilterOptimized();
+                repositoryContexts.Add(new RepositoryContext(targetWarehouse, targetDocument, selector, catalogue));
+            }
+        }
+        else
+        {
+            var warehouse = await koala.Warehouses
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x =>
+                    x.OrganizationName.ToLower() == decodedOrganizationName.ToLower() &&
+                    x.Name.ToLower() == decodedName.ToLower());
+
+            if (warehouse == null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Warehouse not found");
+                activity?.SetTag("error.reason", "warehouse_not_found");
+                context.Response.StatusCode = 404;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    message = "Warehouse not found",
+                    code = 404,
+                });
+                return;
+            }
+
+            var document = await koala.Documents
+                .AsNoTracking()
+                .Where(x => x.WarehouseId == warehouse.Id)
+                .FirstOrDefaultAsync();
+
+            if (document == null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Document not found");
+                activity?.SetTag("error.reason", "document_not_found");
+                context.Response.StatusCode = 404;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    message = "document not found",
+                    code = 404,
+                });
+                return;
+            }
+
+            repositoryContexts.Add(new RepositoryContext(warehouse, document, null, document.GetCatalogueSmartFilterOptimized()));
+        }
+
+        if (repositoryContexts.Count == 0)
         {
             activity?.SetStatus(ActivityStatusCode.Error, "Warehouse not found");
             activity?.SetTag("error.reason", "warehouse_not_found");
@@ -52,40 +224,43 @@ public class ResponsesService(IKoalaWikiContext koala) : FastApi
             await context.Response.WriteAsJsonAsync(new
             {
                 message = "Warehouse not found",
+                missing = missingRepositories,
                 code = 404,
             });
             return;
         }
 
-
-        activity?.SetTag("warehouse.id", warehouse.Id);
-        activity?.SetTag("warehouse.address", warehouse.Address);
-        activity?.SetTag("warehouse.branch", warehouse.Branch);
-
-
-        var document = await koala.Documents
-            .AsNoTracking()
-            .Where(x => x.WarehouseId == warehouse.Id)
-            .FirstOrDefaultAsync();
-
-        if (document == null)
+        if (missingRepositories.Count > 0)
         {
-            activity?.SetStatus(ActivityStatusCode.Error, "Document not found");
-            activity?.SetTag("error.reason", "document_not_found");
+            activity?.SetStatus(ActivityStatusCode.Error, "Partial warehouse resolution failure");
+            activity?.SetTag("error.reason", "partial_warehouse_not_found");
             context.Response.StatusCode = 404;
             await context.Response.WriteAsJsonAsync(new
             {
-                message = "document not found",
+                message = "One or more warehouses could not be resolved",
+                missing = missingRepositories,
                 code = 404,
             });
             return;
         }
 
-        activity?.SetTag("document.id", document.Id);
-        activity?.SetTag("document.git_path", document.GitPath);
+        var isMultiRepository = repositoryContexts.Count > 1;
+        var primaryContext = repositoryContexts[0];
+
+        activity?.SetTag("warehouse.count", repositoryContexts.Count);
+        activity?.SetTag("warehouse.primary_id", primaryContext.Warehouse.Id);
+        activity?.SetTag("warehouse.address", primaryContext.Warehouse.Address);
+        activity?.SetTag("warehouse.branch", primaryContext.Warehouse.Branch);
+        activity?.SetTag("document.id", primaryContext.Document.Id);
+        activity?.SetTag("document.git_path", primaryContext.Document.GitPath);
+
+        if (isMultiRepository)
+        {
+            activity?.SetTag("warehouse.ids", string.Join(',', repositoryContexts.Select(x => x.Warehouse.Id)));
+        }
 
         // 解析仓库的目录结构
-        var path = document.GitPath;
+        var path = primaryContext.Document.GitPath;
 
         using var kernelCreateActivity = Activity.Current.Source.StartActivity("AI.KernelCreation");
         kernelCreateActivity?.SetTag("kernel.path", path);
@@ -98,18 +273,31 @@ public class ResponsesService(IKoalaWikiContext koala) : FastApi
 
         if (OpenAIOptions.EnableMem0)
         {
-            kernel.Plugins.AddFromObject(new RagTool(warehouse!.Id));
+            var warehouseIds = repositoryContexts.Select(x => x.Warehouse.Id).Distinct().ToList();
+            kernel.Plugins.AddFromObject(new RagTool(warehouseIds));
         }
 
-        if (warehouse.Address.Contains("github.com"))
+        for (var index = 0; index < repositoryContexts.Count; index++)
         {
-            kernel.Plugins.AddFromObject(new GithubTool(warehouse.OrganizationName, warehouse.Name,
-                warehouse.Branch), "Github");
-        }
-        else if (warehouse.Address.Contains("gitee.com") && !string.IsNullOrWhiteSpace(GiteeOptions.Token))
-        {
-            kernel.Plugins.AddFromObject(new GiteeTool(warehouse.OrganizationName, warehouse.Name,
-                warehouse.Branch), "Gitee");
+            var repositoryContext = repositoryContexts[index];
+            var pluginLabel = ResolveLabel(repositoryContext.Warehouse, repositoryContext.Selector)
+                .Replace(' ', '_');
+
+            if (repositoryContext.Warehouse.Address.Contains("github.com"))
+            {
+                kernel.Plugins.AddFromObject(new GithubTool(repositoryContext.Warehouse.OrganizationName,
+                        repositoryContext.Warehouse.Name,
+                        repositoryContext.Warehouse.Branch),
+                    repositoryContexts.Count == 1 ? "Github" : $"Github_{index + 1}_{pluginLabel}");
+            }
+            else if (repositoryContext.Warehouse.Address.Contains("gitee.com") &&
+                     !string.IsNullOrWhiteSpace(GiteeOptions.Token))
+            {
+                kernel.Plugins.AddFromObject(new GiteeTool(repositoryContext.Warehouse.OrganizationName,
+                        repositoryContext.Warehouse.Name,
+                        repositoryContext.Warehouse.Branch),
+                    repositoryContexts.Count == 1 ? "Gitee" : $"Gitee_{index + 1}_{pluginLabel}");
+            }
         }
 
         DocumentContext.DocumentStore = new DocumentStore();
@@ -119,7 +307,13 @@ public class ResponsesService(IKoalaWikiContext koala) : FastApi
 
         var history = new ChatHistory();
 
-        string tree = document.GetCatalogueSmartFilterOptimized();
+        string tree = BuildCatalogue(repositoryContexts);
+
+        var repositoryNames = repositoryContexts.Select(x => ResolveLabel(x.Warehouse, x.Selector)).ToList();
+        var repositoryAddresses = repositoryContexts
+            .Select(x => x.Warehouse.Address.Replace(".git", string.Empty)).ToList();
+        var branchDescriptions = repositoryContexts
+            .Select(x => $"{ResolveLabel(x.Warehouse, x.Selector)}:{x.Warehouse.Branch}").ToList();
 
         if (input.DeepResearch)
         {
@@ -127,9 +321,10 @@ public class ResponsesService(IKoalaWikiContext koala) : FastApi
                 new KernelArguments()
                 {
                     ["catalogue"] = tree,
-                    ["repository"] = warehouse.Address.Replace(".git", ""),
-                    ["repository_name"] = warehouse.Name,
-                    ["branch"] = warehouse.Branch
+                    ["repository"] = string.Join('\n', repositoryAddresses),
+                    ["repository_name"] = string.Join(", ", repositoryNames),
+                    ["branch"] = string.Join(", ", branchDescriptions),
+                    ["repository_count"] = repositoryContexts.Count
                 }, OpenAIOptions.DeepResearchModel));
         }
         else
@@ -138,9 +333,10 @@ public class ResponsesService(IKoalaWikiContext koala) : FastApi
                 new KernelArguments()
                 {
                     ["catalogue"] = tree,
-                    ["repository"] = warehouse.Address.Replace(".git", ""),
-                    ["repository_name"] = warehouse.Name,
-                    ["branch"] = warehouse.Branch
+                    ["repository"] = string.Join('\n', repositoryAddresses),
+                    ["repository_name"] = string.Join(", ", repositoryNames),
+                    ["branch"] = string.Join(", ", branchDescriptions),
+                    ["repository_count"] = repositoryContexts.Count
                 }, OpenAIOptions.DeepResearchModel));
         }
 
